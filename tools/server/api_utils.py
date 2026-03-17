@@ -32,13 +32,15 @@ def parse_args():
         default="checkpoints/s2-pro/codec.pth",
     )
     parser.add_argument("--decoder-config-name", type=str, default="modded_dac_vq")
-    parser.add_argument("--device", type=str, default="cuda")
+    parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--half", action="store_true")
     parser.add_argument("--compile", action="store_true")
     parser.add_argument("--max-text-length", type=int, default=0)
-    parser.add_argument("--listen", type=str, default="127.0.0.1:8080")
+    parser.add_argument("--listen", type=str, default="0.0.0.0:8881")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--api-key", type=str, default=None)
+    parser.add_argument("--skip-warmup", action="store_true")
+    parser.add_argument("--lightweight-startup", action="store_true")
 
     return parser.parse_args()
 
@@ -87,8 +89,34 @@ def get_content_type(audio_format):
         return "audio/flac"
     elif audio_format == "mp3":
         return "audio/mpeg"
+    elif audio_format == "opus":
+        return "audio/opus"
+    elif audio_format == "aac":
+        return "audio/aac"
+    elif audio_format == "pcm":
+        return "audio/pcm"
     else:
         return "application/octet-stream"
+
+
+def openai_error_response(
+    message: str,
+    status_code: int = 400,
+    error_type: str = "invalid_request_error",
+    param: str | None = None,
+    code: str | None = None,
+):
+    return JSONResponse(
+        {
+            "error": {
+                "message": message,
+                "type": error_type,
+                "param": param,
+                "code": code,
+            }
+        },
+        status_code=status_code,
+    )
 
 
 def wants_json(req):

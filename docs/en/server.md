@@ -6,13 +6,17 @@ This page covers server-side inference for Fish Audio S2, plus quick links for W
 
 Fish Speech provides an HTTP API server entrypoint at `tools/api_server.py`.
 
+The server now also exposes an OpenAI-compatible speech synthesis route at `POST /v1/audio/speech`.
+It also exposes `GET /v1/models` for OpenAI-compatible model discovery.
+
 ### Start the server locally
 
 ```bash
 python tools/api_server.py \
+  --device cpu \
   --llama-checkpoint-path checkpoints/s2-pro \
   --decoder-checkpoint-path checkpoints/s2-pro/codec.pth \
-  --listen 0.0.0.0:8080
+  --listen 0.0.0.0:8881
 ```
 
 Common options:
@@ -25,7 +29,7 @@ Common options:
 ### Health check
 
 ```bash
-curl -X GET http://127.0.0.1:8080/v1/health
+curl -X GET http://127.0.0.1:8881/v1/health
 ```
 
 Expected response:
@@ -36,9 +40,40 @@ Expected response:
 
 ### Main API endpoint
 
-- `POST /v1/tts` for text-to-speech generation
+- `POST /v1/audio/speech` for OpenAI-compatible text-to-speech generation
+- `GET /v1/models` for OpenAI-compatible TTS model listing
+- `POST /v1/tts` for the native Fish Speech text-to-speech API
 - `POST /v1/vqgan/encode` for VQ encode
 - `POST /v1/vqgan/decode` for VQ decode
+
+OpenAI-compatible request example:
+
+```bash
+curl -X POST http://127.0.0.1:8881/v1/audio/speech \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "tts-1",
+    "input": "Hello from Fish Speech.",
+    "voice": "alloy",
+    "response_format": "mp3"
+  }' \
+  --output speech.mp3
+```
+
+OpenAI-compatible model listing example:
+
+```bash
+curl -X GET http://127.0.0.1:8881/v1/models
+```
+
+Supported OpenAI-compatible response formats on `/v1/audio/speech`:
+
+- `mp3`
+- `opus`
+- `aac`
+- `flac`
+- `wav`
+- `pcm`
 
 ## WebUI Inference
 

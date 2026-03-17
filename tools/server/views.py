@@ -22,6 +22,7 @@ from kui.asgi import (
     request,
 )
 from loguru import logger
+from pydub import AudioSegment
 from typing_extensions import Annotated
 
 from fish_speech.utils.schema import (
@@ -29,6 +30,9 @@ from fish_speech.utils.schema import (
     AddReferenceResponse,
     DeleteReferenceResponse,
     ListReferencesResponse,
+    OpenAIModelListResponse,
+    OpenAIModelResponse,
+    OpenAITTSSpeechRequest,
     ServeTTSRequest,
     ServeVQGANDecodeRequest,
     ServeVQGANDecodeResponse,
@@ -41,6 +45,7 @@ from tools.server.api_utils import (
     format_response,
     get_content_type,
     inference_async,
+    openai_error_response,
 )
 from tools.server.inference import inference_wrapper as inference
 from tools.server.model_manager import ModelManager
@@ -48,10 +53,86 @@ from tools.server.model_utils import (
     batch_vqgan_decode,
     cached_vqgan_batch_encode,
 )
+from tools.server.openai_compat import (
+    SUPPORTED_OPENAI_TTS_MODELS,
+    list_openai_voices,
+)
 
 MAX_NUM_SAMPLES = int(os.getenv("NUM_SAMPLES", 1))
+OPENAI_MODEL_CREATED = 1741046400
 
 routes = Routes()
+
+
+def validate_tts_request(app_state, req: ServeTTSRequest):
+    if app_state.max_text_length > 0 and len(req.text) > app_state.max_text_length:
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            content=f"Text is too long, max length is {app_state.max_text_length}",
+        )
+
+    if req.streaming and req.format != "wav":
+        raise HTTPException(
+            HTTPStatus.BAD_REQUEST,
+            content="Streaming only supports WAV format",
+        )
+
+
+def serialize_audio(audio: np.ndarray, sample_rate: int, audio_format: str) -> bytes:
+    if audio_format == "pcm":
+        pcm_audio = np.clip(audio, -1.0, 1.0)
+        return (pcm_audio * 32767).astype(np.int16).tobytes()
+
+    if audio_format in {"mp3", "opus", "aac"}:
+        pcm_audio = np.clip(audio, -1.0, 1.0)
+        pcm_bytes = (pcm_audio * 32767).astype(np.int16).tobytes()
+        segment = AudioSegment(
+            data=pcm_bytes,
+            sample_width=2,
+            frame_rate=sample_rate,
+            channels=1,
+        )
+        buffer = io.BytesIO()
+        export_args = {"format": audio_format}
+        if audio_format == "opus":
+            export_args = {"format": "ogg", "codec": "libopus"}
+        elif audio_format == "aac":
+            export_args = {"format": "adts", "codec": "aac"}
+        segment.export(buffer, **export_args)
+        return buffer.getvalue()
+
+    buffer = io.BytesIO()
+    sf.write(buffer, audio, sample_rate, format=audio_format.upper())
+    return buffer.getvalue()
+
+
+async def generate_tts_response(req: ServeTTSRequest):
+    app_state = request.app.state
+    model_manager: ModelManager = app_state.model_manager
+    engine = model_manager.tts_inference_engine
+    sample_rate = engine.decoder_model.sample_rate
+
+    validate_tts_request(app_state, req)
+
+    if req.streaming:
+        return StreamResponse(
+            iterable=inference_async(req, engine),
+            headers={
+                "Content-Disposition": f"attachment; filename=audio.{req.format}",
+            },
+            content_type=get_content_type(req.format),
+        )
+
+    audio = next(inference(req, engine))
+    return StreamResponse(
+        iterable=buffer_to_async_generator(
+            serialize_audio(audio, sample_rate, req.format)
+        ),
+        headers={
+            "Content-Disposition": f"attachment; filename=audio.{req.format}",
+        },
+        content_type=get_content_type(req.format),
+    )
 
 
 @routes.http("/v1/health")
@@ -63,6 +144,22 @@ class Health(HttpView):
     @classmethod
     async def post(cls):
         return JSONResponse({"status": "ok"})
+
+
+@routes.http.get("/v1/models")
+async def list_models():
+    return JSONResponse(
+        OpenAIModelListResponse(
+            data=[
+                OpenAIModelResponse(
+                    id=model_id,
+                    created=OPENAI_MODEL_CREATED,
+                    owned_by="fish-speech",
+                )
+                for model_id in SUPPORTED_OPENAI_TTS_MODELS
+            ]
+        ).model_dump(mode="json")
+    )
 
 
 @routes.http.post("/v1/vqgan/encode")
@@ -131,52 +228,7 @@ async def tts(req: Annotated[ServeTTSRequest, Body(exclusive=True)]):
     Generate speech from text using TTS model.
     """
     try:
-        # Get the model from the app
-        app_state = request.app.state
-        model_manager: ModelManager = app_state.model_manager
-        engine = model_manager.tts_inference_engine
-        sample_rate = engine.decoder_model.sample_rate
-
-        # Check if the text is too long
-        if app_state.max_text_length > 0 and len(req.text) > app_state.max_text_length:
-            raise HTTPException(
-                HTTPStatus.BAD_REQUEST,
-                content=f"Text is too long, max length is {app_state.max_text_length}",
-            )
-
-        # Check if streaming is enabled
-        if req.streaming and req.format != "wav":
-            raise HTTPException(
-                HTTPStatus.BAD_REQUEST,
-                content="Streaming only supports WAV format",
-            )
-
-        # Perform TTS
-        if req.streaming:
-            return StreamResponse(
-                iterable=inference_async(req, engine),
-                headers={
-                    "Content-Disposition": f"attachment; filename=audio.{req.format}",
-                },
-                content_type=get_content_type(req.format),
-            )
-        else:
-            fake_audios = next(inference(req, engine))
-            buffer = io.BytesIO()
-            sf.write(
-                buffer,
-                fake_audios,
-                sample_rate,
-                format=req.format,
-            )
-
-            return StreamResponse(
-                iterable=buffer_to_async_generator(buffer.getvalue()),
-                headers={
-                    "Content-Disposition": f"attachment; filename=audio.{req.format}",
-                },
-                content_type=get_content_type(req.format),
-            )
+        return await generate_tts_response(req)
     except HTTPException:
         # Re-raise HTTP exceptions as they are already properly formatted
         raise
@@ -184,6 +236,60 @@ async def tts(req: Annotated[ServeTTSRequest, Body(exclusive=True)]):
         logger.error(f"Error in TTS generation: {e}", exc_info=True)
         raise HTTPException(
             HTTPStatus.INTERNAL_SERVER_ERROR, content="Failed to generate speech"
+        )
+
+
+@routes.http.post("/v1/audio/speech")
+async def openai_audio_speech(
+    req: Annotated[OpenAITTSSpeechRequest, Body(exclusive=True)],
+):
+    """
+    OpenAI-compatible text-to-speech endpoint.
+    """
+    try:
+        model_manager: ModelManager = request.app.state.model_manager
+        reference_ids = model_manager.tts_inference_engine.list_reference_ids()
+
+        if req.model not in SUPPORTED_OPENAI_TTS_MODELS:
+            return openai_error_response(
+                f"The model '{req.model}' does not exist or is not available for speech synthesis.",
+                status_code=400,
+                param="model",
+                code="model_not_found",
+            )
+
+        available_voices = set(list_openai_voices(reference_ids))
+        if req.voice not in available_voices:
+            return openai_error_response(
+                f"Unsupported voice '{req.voice}'.",
+                status_code=400,
+                param="voice",
+                code="invalid_voice",
+            )
+
+        if len(req.input) > 4096:
+            return openai_error_response(
+                "Input must be 4096 characters or fewer.",
+                status_code=400,
+                param="input",
+                code="input_too_long",
+            )
+
+        tts_request = req.to_tts_request(set(reference_ids))
+        return await generate_tts_response(tts_request)
+    except HTTPException as exc:
+        return openai_error_response(
+            str(exc.content) if exc.content else HTTPStatus(exc.status_code).phrase,
+            status_code=exc.status_code,
+        )
+    except ValueError as e:
+        return openai_error_response(str(e), status_code=400)
+    except Exception as e:
+        logger.error(f"Error in OpenAI-compatible TTS generation: {e}", exc_info=True)
+        return openai_error_response(
+            "Failed to generate speech",
+            status_code=500,
+            error_type="server_error",
         )
 
 

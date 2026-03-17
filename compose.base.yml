@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: docker/Dockerfile
       args:
-        BACKEND: ${BACKEND:-cuda}     # or cpu
+        BACKEND: ${BACKEND:-cpu}     # or cuda
         UV_VERSION: ${UV_VERSION:-0.8.15}
     volumes:
       - ./checkpoints:/app/checkpoints
@@ -12,12 +12,12 @@ services:
     environment:
       COMPILE: ${COMPILE:-0}
     # GPU (remove this block if CPU-only):
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
     tty: true
     stdin_open: true

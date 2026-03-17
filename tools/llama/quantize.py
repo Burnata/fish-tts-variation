@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from fish_speech.models.text2semantic.inference import load_model
+from fish_speech.models.text2semantic.llama import DualARTransformer
 from fish_speech.models.text2semantic.llama import find_multiple
 
 ##### Quantization Primitives ######
@@ -445,12 +445,9 @@ def quantize(checkpoint_path: Path, mode: str, groupsize: int, timestamp: str) -
     print("Loading model ...")
     t0 = time.time()
 
-    model, _ = load_model(
-        checkpoint_path=checkpoint_path,
-        device=device,
-        precision=precision,
-        compile=False,
-    )
+    model = DualARTransformer.from_pretrained(checkpoint_path, load_weights=True)
+    model = model.to(device=device, dtype=precision)
+    model.eval()
     vq_model = "codec.pth"
     now = timestamp if timestamp != "None" else generate_folder_name()
 

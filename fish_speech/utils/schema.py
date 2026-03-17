@@ -82,7 +82,7 @@ class ServeTTSRequest(BaseModel):
     text: str
     chunk_length: Annotated[int, conint(ge=100, le=300, strict=True)] = 200
     # Audio format
-    format: Literal["wav", "pcm", "mp3"] = "wav"
+    format: Literal["wav", "pcm", "mp3", "flac"] = "wav"
     # References audios for in-context learning
     references: list[ServeReferenceAudio] = []
     # Reference id
@@ -103,6 +103,26 @@ class ServeTTSRequest(BaseModel):
     class Config:
         # Allow arbitrary types for pytorch related types
         arbitrary_types_allowed = True
+
+
+class OpenAITTSSpeechRequest(BaseModel):
+    model: str
+    input: str = Field(..., min_length=1)
+    voice: str = "alloy"
+    response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = "mp3"
+    speed: Annotated[float, Field(ge=0.25, le=4.0, strict=True)] = 1.0
+    instructions: str | None = None
+
+    def to_tts_request(self, available_reference_ids: set[str] | None = None):
+        reference_id = None
+        if available_reference_ids and self.voice in available_reference_ids:
+            reference_id = self.voice
+
+        return ServeTTSRequest(
+            text=self.input,
+            format=self.response_format,
+            reference_id=reference_id,
+        )
 
 
 class AddReferenceRequest(BaseModel):
@@ -134,3 +154,15 @@ class UpdateReferenceResponse(BaseModel):
     message: str
     old_reference_id: str
     new_reference_id: str
+
+
+class OpenAIModelResponse(BaseModel):
+    id: str
+    object: str = "model"
+    created: int
+    owned_by: str
+
+
+class OpenAIModelListResponse(BaseModel):
+    object: str = "list"
+    data: list[OpenAIModelResponse]

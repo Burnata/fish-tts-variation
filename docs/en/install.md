@@ -108,14 +108,14 @@ You can customize the deployment using environment variables:
 
 ```bash
 # .env file example
-BACKEND=cuda              # or cpu
+BACKEND=cpu               # or cuda
 COMPILE=1                 # Enable compile optimization
 GRADIO_PORT=7860         # WebUI port
-API_PORT=8080            # API server port
+API_PORT=8881            # API server port
 UV_VERSION=0.8.15        # UV package manager version
 ```
 
-The command will build the image and run the container. You can access the WebUI at `http://localhost:7860` and the API server at `http://localhost:8080`.
+The command will build the image and run the container. You can access the WebUI at `http://localhost:7860` and the API server at `http://localhost:8881`.
 
 ### Manual Docker Build
 
@@ -161,7 +161,7 @@ docker build \
 
 #### Build Arguments
 
-- `BACKEND`: `cuda` or `cpu` (default: `cuda`)
+- `BACKEND`: `cpu` or `cuda` (default: `cpu`)
 - `CUDA_VER`: CUDA version (default: `12.6.0`)
 - `UV_EXTRA`: UV extra for CUDA (default: `cu126`)
 - `UBUNTU_VER`: Ubuntu version (default: `24.04`)
@@ -180,7 +180,7 @@ Both methods require mounting these directories:
 - `GRADIO_SERVER_NAME=0.0.0.0` - WebUI server host
 - `GRADIO_SERVER_PORT=7860` - WebUI server port
 - `API_SERVER_NAME=0.0.0.0` - API server host  
-- `API_SERVER_PORT=8080` - API server port
+- `API_SERVER_PORT=8881` - API server port
 
 !!! note
     The Docker containers expect model weights to be mounted at `/app/checkpoints`. Make sure to download the required model weights before starting the containers.

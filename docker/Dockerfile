@@ -56,7 +56,7 @@
 #   docker run \
 #       --gpus all \
 #       -v ./checkpoints:/app/checkpoints \
-#       -p 8080:8080 \
+#       -p 8881:8881 \
 #       -it fish-speech-server:cuda
 
 
@@ -81,7 +81,8 @@ ARG USER_GID=1000
 
 # --- CUDA (x86_64) ---
 FROM nvidia/cuda:${CUDA_VER}-cudnn-runtime-ubuntu${UBUNTU_VER} AS base-cuda
-ENV DEBIAN_FRONTEND=noninteractive
+ENV DEBIAN_FRONTEND=noninteractive \
+    UV_EXTRA=${UV_EXTRA}
 
 # Install system dependencies in a single layer with cleanup
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -137,7 +138,6 @@ ARG USERNAME
 ARG USER_UID
 ARG USER_GID
 ARG UV_VERSION
-ARG UV_EXTRA
 
 ENV BACKEND=${BACKEND} \
     DEBIAN_FRONTEND=noninteractive \
@@ -329,10 +329,11 @@ FROM app-base AS server
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
 ARG API_SERVER_NAME="0.0.0.0"
-ARG API_SERVER_PORT=8080
+ARG API_SERVER_PORT=8881
 ARG LLAMA_CHECKPOINT_PATH="checkpoints/s2-pro"
 ARG DECODER_CHECKPOINT_PATH="checkpoints/s2-pro/codec.pth"
 ARG DECODER_CONFIG_NAME="modded_dac_vq"
+ARG LIGHTWEIGHT_STARTUP=1
 
 # Expose port
 EXPOSE ${API_SERVER_PORT}
@@ -343,6 +344,7 @@ ENV API_SERVER_PORT=${API_SERVER_PORT}
 ENV LLAMA_CHECKPOINT_PATH=${LLAMA_CHECKPOINT_PATH}
 ENV DECODER_CHECKPOINT_PATH=${DECODER_CHECKPOINT_PATH}
 ENV DECODER_CONFIG_NAME=${DECODER_CONFIG_NAME}
+ENV LIGHTWEIGHT_STARTUP=${LIGHTWEIGHT_STARTUP}
 
 # Create server entrypoint
 RUN printf '%s\n' \
@@ -359,12 +361,17 @@ RUN printf '%s\n' \
     'log "Compile args: ${COMPILE_ARGS}"' \
     'log "Server: ${API_SERVER_NAME}:${API_SERVER_PORT}"' \
     '' \
-    'exec uv run tools/api_server.py \' \
+    'STARTUP_ARGS=""' \
+    'if [ "${LIGHTWEIGHT_STARTUP:-0}" = "1" ] || [ "${LIGHTWEIGHT_STARTUP:-}" = "true" ]; then' \
+    '  STARTUP_ARGS="--lightweight-startup --skip-warmup"' \
+    'fi' \
+    '' \
+    'exec uv run --no-sync tools/api_server.py \' \
     '  --listen "${API_SERVER_NAME}:${API_SERVER_PORT}" \' \
     '  --llama-checkpoint-path "${LLAMA_CHECKPOINT_PATH}" \' \
     '  --decoder-checkpoint-path "${DECODER_CHECKPOINT_PATH}" \' \
     '  --decoder-config-name "${DECODER_CONFIG_NAME}" \' \
-    '  ${DEVICE_ARGS} ${COMPILE_ARGS}' \
+    '  ${DEVICE_ARGS} ${COMPILE_ARGS} ${STARTUP_ARGS}' \
     > /app/start_server.sh && chmod +x /app/start_server.sh
 
 # Health check

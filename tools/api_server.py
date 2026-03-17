@@ -85,6 +85,8 @@ class API(ExceptionHandler):
             device=self.args.device,
             half=self.args.half,
             compile=self.args.compile,
+            skip_warmup=self.args.skip_warmup,
+            lightweight_startup=self.args.lightweight_startup,
             llama_checkpoint_path=self.args.llama_checkpoint_path,
             decoder_checkpoint_path=self.args.decoder_checkpoint_path,
             decoder_config_name=self.args.decoder_config_name,

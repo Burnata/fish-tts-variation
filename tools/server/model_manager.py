@@ -15,6 +15,8 @@ class ModelManager:
         device: str,
         half: bool,
         compile: bool,
+        skip_warmup: bool,
+        lightweight_startup: bool,
         llama_checkpoint_path: str,
         decoder_checkpoint_path: str,
         decoder_config_name: str,
@@ -24,16 +26,15 @@ class ModelManager:
         self.device = device
         self.half = half
         self.compile = compile
+        self.skip_warmup = skip_warmup
+        self.lightweight_startup = lightweight_startup
 
+        if self.lightweight_startup:
+            self.skip_warmup = True
+            logger.info("Lightweight startup enabled: warmup is disabled.")
+
+        self.device = self.resolve_device(device)
         self.precision = torch.half if half else torch.bfloat16
-
-        # Check if MPS or CUDA is available
-        if torch.backends.mps.is_available():
-            self.device = "mps"
-            logger.info("mps is available, running on mps.")
-        elif not torch.cuda.is_available():
-            self.device = "cpu"
-            logger.info("CUDA is not available, running on CPU.")
 
         # Load the TTS models
         self.load_llama_model(
@@ -50,8 +51,35 @@ class ModelManager:
         )
 
         # Warm up the models
-        if self.mode == "tts":
+        if self.mode == "tts" and not self.skip_warmup:
             self.warm_up(self.tts_inference_engine)
+
+    def resolve_device(self, requested_device: str) -> str:
+        if requested_device == "cpu":
+            logger.info("Running on CPU.")
+            return "cpu"
+
+        if requested_device == "mps":
+            if torch.backends.mps.is_available():
+                logger.info("Running on mps.")
+                return "mps"
+
+            logger.info("MPS is not available, running on CPU.")
+            return "cpu"
+
+        if requested_device == "cuda":
+            if torch.cuda.is_available():
+                logger.info("Running on CUDA.")
+                return "cuda"
+            if torch.backends.mps.is_available():
+                logger.info("CUDA is not available, running on mps.")
+                return "mps"
+
+            logger.info("CUDA is not available, running on CPU.")
+            return "cpu"
+
+        logger.info(f"Unknown device '{requested_device}', running on CPU.")
+        return "cpu"
 
     def load_llama_model(
         self, checkpoint_path, device, precision, compile, mode
